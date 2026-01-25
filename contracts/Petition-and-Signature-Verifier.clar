@@ -7,8 +7,19 @@
 (define-constant err-invalid-threshold (err u105))
 (define-constant err-insufficient-signatures (err u106))
 (define-constant err-petition-active (err u107))
+(define-constant err-invalid-category (err u108))
 
 (define-data-var petition-nonce uint u0)
+
+(define-map petition-categories
+    { petition-id: uint }
+    { category: (string-ascii 50) }
+)
+
+(define-map category-petitions
+    { category: (string-ascii 50) }
+    { petition-ids: (list 500 uint) }
+)
 
 (define-map petitions
     { petition-id: uint }
@@ -92,6 +103,19 @@
     )
 )
 
+(define-private (add-petition-to-category (category (string-ascii 50)) (petition-id uint))
+    (let 
+        (
+            (current-petitions (default-to (list) (get petition-ids (map-get? category-petitions { category: category }))))
+        )
+        (map-set category-petitions 
+            { category: category }
+            { petition-ids: (unwrap! (as-max-len? (append current-petitions petition-id) u500) (err u999)) }
+        )
+        (ok true)
+    )
+)
+
 (define-public (create-petition (title (string-ascii 100)) (description (string-ascii 500)) (target-signatures uint) (deadline uint))
     (let 
         (
@@ -114,6 +138,42 @@
                 is-verified: false
             }
         )
+        
+        (var-set petition-nonce petition-id)
+        (ok petition-id)
+    )
+)
+
+(define-public (create-petition-with-category (title (string-ascii 100)) (description (string-ascii 500)) (target-signatures uint) (deadline uint) (category (string-ascii 50)))
+    (let 
+        (
+            (petition-id (+ (var-get petition-nonce) u1))
+        )
+        (asserts! (> target-signatures u0) err-invalid-threshold)
+        (asserts! (> deadline stacks-block-height) err-invalid-threshold)
+        (asserts! (> (len category) u0) err-invalid-category)
+        
+        (map-set petitions
+            { petition-id: petition-id }
+            {
+                creator: tx-sender,
+                title: title,
+                description: description,
+                target-signatures: target-signatures,
+                created-at: stacks-block-height,
+                deadline: deadline,
+                is-active: true,
+                signature-count: u0,
+                is-verified: false
+            }
+        )
+        
+        (map-set petition-categories
+            { petition-id: petition-id }
+            { category: category }
+        )
+        
+        (try! (add-petition-to-category category petition-id))
         
         (var-set petition-nonce petition-id)
         (ok petition-id)
@@ -263,5 +323,13 @@
         })
         err-not-found
     )
+)
+
+(define-read-only (get-petition-category (petition-id uint))
+    (map-get? petition-categories { petition-id: petition-id })
+)
+
+(define-read-only (get-petitions-by-category (category (string-ascii 50)))
+    (map-get? category-petitions { category: category })
 )
 
